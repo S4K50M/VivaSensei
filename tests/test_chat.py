@@ -1,6 +1,7 @@
 """Exercise session lifecycle through Streamlit's UI, without loading the GPU."""
 
 from copy import deepcopy
+from io import BytesIO
 from pathlib import Path
 import sys
 import unittest
@@ -120,6 +121,72 @@ class ChatMemoryTests(unittest.TestCase):
         self.assertEqual(len(self.app.session_state.messages), 1)
         self.assertFalse(self.app.chat_input[0].disabled)
         self.assertEqual(len(self.app.error), 0)
+
+    def test_voice_answer_is_reviewed_and_submitted_once(self):
+        recording = BytesIO(b"recorded-wave-audio")
+        def microphone(*args, **kwargs):
+            return recording if kwargs["key"] == "voice_recording_0" else None
+        with patch("streamlit.audio_input", side_effect=microphone), patch(
+            "speech_utils.speech_to_text", return_value="Original transcript"
+        ) as transcribe:
+            self.app.run()
+            self.app.button(key="transcribe_recording").click().run()
+            self.assertEqual(self.app.text_area(key="voice_transcript").value, "Original transcript")
+            self.assertEqual(len(self.app.session_state.messages), 1)
+            self.app.run()
+            self.assertEqual(transcribe.call_count, 1)
+            self.app.text_area(key="voice_transcript").set_value("My corrected answer")
+            self.app.button(key="send_voice_answer").click().run()
+            self.assertEqual(len(self.app.exception), 0)
+            self.assertEqual(self.received[-1][-1]["content"], "My corrected answer")
+            self.assertEqual(len(self.app.session_state.messages), 3)
+            self.app.run()
+            self.assertEqual(len(self.app.session_state.messages), 3)
+            self.assertEqual(transcribe.call_count, 1)
+            self.assertNotIn("voice_transcript", self.app.session_state)
+
+    def test_transcription_failure_can_retry_without_changing_chat(self):
+        with patch("streamlit.audio_input", return_value=BytesIO(b"wave-audio")), patch(
+            "speech_utils.speech_to_text", side_effect=RuntimeError("No speech recognized")
+        ) as transcribe:
+            self.app.run()
+            self.app.button(key="transcribe_recording").click().run()
+            self.assertEqual(len(self.app.exception), 0)
+            self.assertEqual(len(self.app.session_state.messages), 1)
+            self.assertIn("No speech", self.app.error[0].value)
+            transcribe.side_effect = None
+            transcribe.return_value = "A recognized answer"
+            self.app.button(key="transcribe_recording").click().run()
+            self.assertEqual(self.app.text_area(key="voice_transcript").value, "A recognized answer")
+
+    def test_reply_audio_is_cached_per_session_and_reset_with_viva(self):
+        with patch("speech_utils.text_to_speech", return_value=b"mp3-audio") as speak:
+            self.app.button(key="begin_viva").click().run()
+            speak.assert_not_called()
+            self.app.button(key="listen_2").click().run()
+            speak.assert_called_once_with("What is channel length modulation?")
+            self.app.run()
+            self.assertEqual(speak.call_count, 1)
+            self.assertEqual(self.app.session_state.examiner_audio[2], b"mp3-audio")
+            other = AppTest.from_file(str(PROJECT_DIR / "app.py")).run()
+            self.assertNotIn("examiner_audio", other.session_state)
+            self.app.button(key="new_viva").click().run()
+            self.assertNotIn("examiner_audio", self.app.session_state)
+
+    def test_automatic_speech_failure_preserves_text_and_can_retry(self):
+        with patch("speech_utils.text_to_speech", side_effect=RuntimeError("Speech API unavailable")) as speak:
+            self.app.toggle(key="read_aloud").set_value(True).run()
+            self.app.button(key="begin_viva").click().run()
+            self.assertEqual(len(self.app.exception), 0)
+            self.assertEqual(len(self.app.session_state.messages), 3)
+            self.assertEqual(len(self.app.warning), 1)
+            self.app.run()
+            self.assertEqual(speak.call_count, 1)
+            speak.side_effect = None
+            speak.return_value = b"mp3-audio"
+            self.app.button(key="listen_2").click().run()
+            self.assertEqual(speak.call_count, 2)
+            self.assertEqual(self.app.session_state.examiner_audio[2], b"mp3-audio")
 
 
 if __name__ == "__main__":

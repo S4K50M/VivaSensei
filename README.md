@@ -50,8 +50,7 @@ run without Hugging Face network requests using:
 HF_HUB_OFFLINE=1 dlenv/bin/python VivaSensei/inference.py
 ```
 
-This step does not include
-the later memory, research, and voice integrations.
+The model runs locally; speech features described below use ElevenLabs.
 
 Reference: [Qwen's official model card and Transformers quickstart](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct).
 Quantization: [Hugging Face bitsandbytes documentation](https://huggingface.co/docs/transformers/quantization/bitsandbytes).
@@ -112,3 +111,39 @@ technical explanations against course material. Factual accuracy remains a model
 limitation; passing the application tests does not resolve it.
 
 Streamlit reference: [Session State](https://docs.streamlit.io/develop/api-reference/caching-and-state/st.session_state).
+
+## Voice answers and examiner speech
+
+Install the dependencies in `requirements.txt` and put `ELEVENLABS_API_KEY` in
+`VivaSensei/.env`. The helper resolves this file relative to its own location,
+so launching Streamlit from `DeepLearning` works. An existing environment
+variable takes precedence; optional `VivaSensei/.env.local` overrides `.env`
+values when no environment variable is already set. Both files are gitignored.
+
+Expand **Answer by voice**, allow microphone access, and record your answer.
+Click **Transcribe recording**, review or edit **Review your transcript**, then
+click **Send voice answer**. The reviewed text enters the same conversation as
+a typed answer. Recording or transcribing alone does not send an answer to Qwen.
+Use **Listen** below any examiner reply to generate an MP3, or enable
+**Read new replies aloud** in the sidebar for automatic speech on new replies.
+Browsers may require pressing the audio player's play button to begin playback.
+
+Speech uses the helper's `eleven_v4` synthesis model, `scribe_v2` transcription
+model, and existing voice ID. Your ElevenLabs account must have access to that
+voice. Audio and transcripts are sent to ElevenLabs when the corresponding
+controls are used; Qwen inference remains local. Automatic speech is off by
+default. Ordinary reruns reuse generated audio within the current session,
+and **Start new viva** clears voice drafts and audio along with the chat.
+Speech failures can be retried without losing the text conversation.
+
+The normal test suite mocks ElevenLabs and uses no API credits. To run one real
+synthesis request and transcribe the result (uses ElevenLabs credits):
+
+```bash
+dlenv/bin/python VivaSensei/tests/smoke_speech.py
+```
+
+This saves the test MP3 under `VivaSensei/.cache/speech/smoke.mp3`.
+References: [Streamlit audio recording](https://docs.streamlit.io/develop/api-reference/widgets/st.audio_input),
+[ElevenLabs Python SDK](https://github.com/elevenlabs/elevenlabs-python),
+and [ElevenLabs models](https://elevenlabs.io/docs/overview/models).

@@ -1,8 +1,11 @@
 """Streamlit viva with conversation memory scoped to the current session."""
 
+from hashlib import sha256
+
 import streamlit as st
 
 from inference import QwenExaminer
+from speech_utils import speech_to_text, text_to_speech
 from viva import default_viva, system_message
 
 
@@ -10,6 +13,60 @@ from viva import default_viva, system_message
 def get_examiner():
     # Cache only model resources. Never put a student's chat in this shared object.
     return QwenExaminer()
+
+
+def clear_voice_answer():
+    st.session_state.pop("voice_transcript", None)
+    st.session_state.pop("voice_recording_hash", None)
+    st.session_state.voice_recording_id = st.session_state.get("voice_recording_id", 0) + 1
+
+
+def render_reply_audio(index, text):
+    audio = st.session_state.setdefault("examiner_audio", {})
+    automatic = st.session_state.get("speak_reply") == index
+    requested = st.button("Listen" if index not in audio else "Regenerate audio", key=f"listen_{index}")
+    if automatic or requested:
+        st.session_state.pop("speak_reply", None)
+        try:
+            with st.spinner("Creating examiner audio…"):
+                audio[index] = text_to_speech(text)
+        except Exception as error:
+            st.warning(str(error) if isinstance(error, ValueError) else
+                       "Couldn't create speech. Check your ElevenLabs connection, key, voice access, and credits.")
+    if index in audio:
+        st.audio(audio[index], format="audio/mpeg", autoplay=automatic or requested)
+
+
+def render_voice_answer(disabled):
+    """Transcribe only on request and let the student review before sending."""
+    with st.expander("Answer by voice"):
+        st.caption("Record an answer, transcribe it with ElevenLabs, then review and send the text.")
+        recording = st.audio_input(
+            "Record your answer", sample_rate=16000, disabled=disabled,
+            key=f"voice_recording_{st.session_state.get('voice_recording_id', 0)}",
+        )
+        if recording is not None:
+            data = recording.getvalue()
+            recording_hash = sha256(data).hexdigest()
+            if recording_hash != st.session_state.get("voice_recording_hash"):
+                st.session_state.voice_recording_hash = recording_hash
+                st.session_state.pop("voice_transcript", None)
+        if st.button("Transcribe recording", key="transcribe_recording", disabled=disabled or recording is None):
+            try:
+                with st.spinner("Transcribing your answer…"):
+                    st.session_state.voice_transcript = speech_to_text(data)
+            except Exception as error:
+                st.error(str(error) if isinstance(error, (ValueError, RuntimeError)) else
+                         "Couldn't transcribe this recording. Check your ElevenLabs connection, key, and credits, then retry.")
+        if "voice_transcript" in st.session_state:
+            with st.form("voice_answer"):
+                transcript = st.text_area("Review your transcript", key="voice_transcript", disabled=disabled)
+                send = st.form_submit_button("Send voice answer", key="send_voice_answer", disabled=disabled)
+            if send:
+                if transcript.strip():
+                    return transcript.strip()
+                st.error("Enter an answer before sending.")
+    return None
 
 
 def main():
@@ -22,6 +79,8 @@ def main():
         st.session_state.viva = default_viva()
     if "messages" not in st.session_state:
         st.session_state.messages = [system_message(st.session_state.viva)]
+    if st.session_state.pop("clear_voice_on_rerun", False):
+        clear_voice_answer()
 
     with st.sidebar:
         st.header("Current viva")
@@ -48,16 +107,22 @@ def main():
                     st.session_state.messages = [system_message(st.session_state.viva)]
                     st.session_state.pop("response_error", None)
                     st.session_state.pop("pending_answer", None)
+                    st.session_state.pop("examiner_audio", None)
+                    st.session_state.pop("speak_reply", None)
+                    clear_voice_answer()
         st.caption("Settings apply to this chat. Starting a new viva clears its conversation.")
+        st.toggle("Read new replies aloud", value=False, key="read_aloud")
 
     # Refresh just the system context when settings change; retain all chat turns.
     st.session_state.messages[0] = system_message(st.session_state.viva)
     viva = st.session_state.viva
     st.subheader(f"{viva['subject']} · {viva['current_topic']}")
     st.caption(f"Difficulty: {viva['difficulty']}")
-    for message in st.session_state.messages[1:]:
+    for index, message in enumerate(st.session_state.messages[1:], start=1):
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
+            if message["role"] == "assistant":
+                render_reply_audio(index, message["content"])
 
     prompt = None
     if len(st.session_state.messages) == 1 and st.button("Ask first question", key="begin_viva"):
@@ -91,7 +156,11 @@ def main():
     answer = st.chat_input("Your answer or a question for the examiner", disabled=pending)
     if answer and answer.strip():
         prompt = answer.strip()
+    voice_answer = render_voice_answer(disabled=pending or bool(prompt))
+    if voice_answer:
+        prompt = voice_answer
     if prompt:
+        st.session_state.clear_voice_on_rerun = True
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
@@ -109,6 +178,8 @@ def main():
             st.rerun()
         else:
             st.session_state.messages.append({"role": "assistant", "content": response.strip()})
+            if st.session_state.read_aloud:
+                st.session_state.speak_reply = len(st.session_state.messages) - 1
             st.rerun()
 
 
