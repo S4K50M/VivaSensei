@@ -1,149 +1,201 @@
-# VivaSensei
-Your Personal AI Viva Examiner
+# 🎓 VivaSensei
 
-## Step 1: local Qwen inference
+### Your personal AI viva examiner
 
-Uses **Qwen/Qwen2.5-7B-Instruct**, with the official chat template and a viva
-examiner system prompt. Dependencies live in the sibling `dlenv` environment.
-Run these commands from the `DeepLearning` directory:
+**A Streamlit app that turns viva preparation into a conversation: one question, your answer, concise feedback, and a follow-up.**
 
-```bash
-dlenv/bin/python -m pip install -r VivaSensei/requirements.txt
-dlenv/bin/python VivaSensei/inference.py --check
-dlenv/bin/python VivaSensei/inference.py
+Built for students preparing for oral examinations, VivaSensei combines a locally running Qwen language model with optional ElevenLabs speech to help students practise explaining what they know.
+
+**Hackathon focus:** Education · Conversational AI · Voice interaction
+
+**Status:** Working local prototype
+
+---
+
+## The problem
+
+Knowing a topic and explaining it under questioning are different skills. Notes and question banks help students revise, but offer limited practice with follow-up questions. A mock viva usually depends on another person being available to listen, assess an answer, and keep the discussion going.
+
+## Our solution
+
+VivaSensei gives students an on-demand practice examiner. Choose a subject, topic, difficulty, and areas you want to improve. The examiner asks a question, uses the conversation to respond to your answer, and continues with a follow-up.
+
+Students can type or record an answer, review the transcript before submitting it, and listen to examiner responses. The default session covers **CMOS Analog IC Design → Current Mirrors**, but the subject and topic are editable.
+
+## What the prototype does
+
+| Feature | Student experience |
+| --- | --- |
+| Configurable practice | Set your subject, current topic, and Easy, Medium, or Hard difficulty. |
+| Focus on weak areas | Enter weaknesses in the sidebar to guide the examiner's questions. |
+| Conversational examination | The examiner is prompted to ask one question at a time, give brief feedback, and ask a follow-up. |
+| Same-session memory | Earlier questions and answers stay in the context sent to the model. |
+| Voice answers | Record speech, transcribe it through ElevenLabs, then review and edit before sending. |
+| Spoken questions and feedback | Use **Listen** on a reply or enable **Read new replies aloud**. |
+| Recoverable conversations | Retry, edit, or discard an unanswered message if generation fails. |
+| Local language model | Qwen inference runs on the host machine; text chat needs no hosted LLM API key. |
+
+## Why this approach
+
+- **Practise explaining, not just recalling.** The question–answer–follow-up loop encourages students to articulate their understanding.
+- **Bring context into the viva.** Topic, difficulty, self-reported weaknesses, and earlier turns guide the examiner.
+- **Make oral practice accessible.** Typed and spoken answers share the same conversation, with an explicit transcript review step.
+- **Run the examiner locally.** The CUDA path uses 4-bit quantization to reduce GPU memory requirements.
+
+## Demo walkthrough
+
+1. Launch the app and select **CMOS Analog IC Design**, **Current Mirrors**, and **Medium** difficulty.
+2. Add **Channel length modulation** and **Output resistance** as weaknesses, then click **Apply settings**.
+3. Click **Ask first question** and submit a typed answer. Show the examiner's feedback and follow-up.
+4. Expand **Answer by voice**, record an answer, and click **Transcribe recording**. Review the text and click **Send voice answer**.
+5. Click **Listen** beneath an examiner response to hear it aloud.
+6. Change the topic and apply settings to continue the conversation, or click **Start new viva** to begin fresh.
+
+The voice steps require an ElevenLabs API key and access to the configured models and voice. Text practice works without speech credentials.
+
+## How it works
+
+```mermaid
+flowchart TD
+    A[Student: settings and typed answer] --> B[Streamlit interface]
+    C[Recorded answer] --> D[ElevenLabs transcription]
+    D --> E[Student reviews transcript]
+    E --> B
+    B --> F[Session history and viva instructions]
+    F --> G[Local Qwen2.5-7B-Instruct]
+    G --> H[Examiner feedback and next question]
+    H --> B
+    H --> I[Optional ElevenLabs speech synthesis]
+    I --> J[Audio playback]
 ```
 
-The default input is `Ask me one viva question about CMOS current mirrors.`
-Verified output from Qwen2.5-7B-Instruct on the development GPU:
+Settings and conversation history live in Streamlit session state. Each model call receives the viva instructions, current settings, and complete chat history. The model and tokenizer are cached across reruns, while conversations remain separate for each session. A lock serializes inference calls to the shared model.
 
-> What are the key factors to consider when designing a CMOS current mirror for high accuracy in analog circuits?
+## Tech stack
 
-The question comes from the model and is not hardcoded.
+| Layer | Technology |
+| --- | --- |
+| Interface | Python, Streamlit |
+| Language model | Qwen/Qwen2.5-7B-Instruct |
+| Inference | PyTorch, Hugging Face Transformers, Accelerate |
+| GPU quantization | bitsandbytes, 4-bit NF4 with double quantization |
+| Voice | ElevenLabs Python SDK for transcription and speech synthesis |
+| Configuration | python-dotenv |
+| Validation | unittest, mocks, Streamlit AppTest, optional integration smoke checks |
 
-For another topic:
+## Run locally
 
-```bash
-dlenv/bin/python VivaSensei/inference.py "Ask me one viva question about Miller's theorem."
-```
+### 1. Install dependencies
 
-`--check` downloads only tokenizer/config assets and verifies chat formatting.
-It does not load weights or generate a response. Full inference downloads roughly
-15 GB of model weights into `VivaSensei/.cache/huggingface/` by default; an existing
-`HF_HOME` environment variable overrides this location. Use `--device cpu` or
-`--device cuda` to select hardware explicitly; the default uses CUDA if available.
-On CUDA, the default loads the same model in 4-bit NF4 precision using bitsandbytes,
-with double quantization and bfloat16 computation (float16 on older GPUs without
-bfloat16 support). This reduces GPU memory use and
-can affect the generated question. `--precision bf16` selects full 16-bit weights,
-needing about 14.2 GiB for weights plus runtime memory. CPU inference uses bfloat16
-and requires at least 16 GiB of available RAM; otherwise the script stops before
-downloading weights. Full bfloat16 GPU inference also requires at least 16 GiB of
-available VRAM in this script. 4-bit loading still downloads the original weights.
-
-The current machine has an RTX 4050 with 6 GB VRAM, suitable for this short 4-bit
-run. The workspace sandbox hides GPU access, so inference must run from a normal
-terminal or with approved execution outside the sandbox. Concurrent weight loading
-is disabled to keep peak GPU memory within this device's capacity. Once downloaded,
-run without Hugging Face network requests using:
+Run these commands from the **VivaSensei project directory**. Python 3.11 is the version used in the development environment.
 
 ```bash
-HF_HUB_OFFLINE=1 dlenv/bin/python VivaSensei/inference.py
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
 ```
 
-The model runs locally; speech features described below use ElevenLabs.
+**Hardware and download requirements:**
 
-Reference: [Qwen's official model card and Transformers quickstart](https://huggingface.co/Qwen/Qwen2.5-7B-Instruct).
-Quantization: [Hugging Face bitsandbytes documentation](https://huggingface.co/docs/transformers/quantization/bitsandbytes).
+- CUDA inference defaults to 4-bit weights. The development setup used an NVIDIA RTX 4050 with 6 GB VRAM for short sessions; available memory and workload affect whether a session fits.
+- CPU inference uses bfloat16, and the script requires at least **16 GiB of available RAM**. Full bfloat16 GPU inference requires at least **16 GiB of available VRAM** and bfloat16 support.
+- The first full inference downloads roughly **15 GB of model weights**, including when using 4-bit loading. Assets are cached under `.cache/huggingface/` unless `HF_HOME` is already set.
 
-## Same-chat viva memory
-
-Start the chat app from the `DeepLearning` directory in a normal terminal with
-GPU access:
+### 2. Validate model formatting
 
 ```bash
-HF_HUB_OFFLINE=1 dlenv/bin/python -m streamlit run VivaSensei/app.py --server.address 127.0.0.1 --browser.gatherUsageStats false
+python inference.py --check
 ```
 
-Open the local URL shown by Streamlit. Choose your subject, difficulty, current
-topic, and weaknesses in the sidebar, then click **Ask first question**. Answer
-in the chat box. Qwen briefly assesses your answer and asks a follow-up.
+This downloads tokenizer/config assets and validates the chat template without loading model weights or generating a response.
 
-The current conversation is stored in `st.session_state.messages`, beginning
-with one system message. Settings live in `st.session_state.viva`, a plain Python
-dictionary. Each Qwen call receives the structured CURRENT VIVA context and all
-previous assistant/user messages, followed by your latest answer. Earlier turns
-are never silently dropped. **Apply settings** updates the system context and
-preserves the chat; **Start new viva** clears the conversation while retaining
-the chosen settings. Weaknesses are supplied by you and can be edited in the
-sidebar; this step does not automatically extract or score them.
-
-Only the model/tokenizer are cached across Streamlit reruns. Student history
-stays per session. Calls to the shared model are serialized so separate browser
-sessions do not perform GPU inference simultaneously. If generation fails, the
-unanswered message is retained; **Retry response** retries the same turn and
-**Edit unanswered message** lets you shorten or correct that turn and resubmit it
-without duplicating history. **Discard unanswered message** lets you submit a
-different answer.
-
-The input budget is 2,048 tokens per call to keep memory use bounded on the local
-6 GB GPU, with up to 192 new output tokens. If the full chat exceeds that budget,
-the app retains the history and asks you to start a new viva or shorten your
-answer. Browser reloads or server restarts can reset this memory; it is temporary
-session context, with no database persistence yet.
-
-Run session lifecycle tests without loading Qwen:
+### 3. Launch the app
 
 ```bash
-dlenv/bin/python -m unittest discover -s VivaSensei/tests -v
+python -m streamlit run app.py --server.address 127.0.0.1 --browser.gatherUsageStats false
 ```
 
-Run the real three-turn context check on the GPU:
+Open the local URL printed by Streamlit. The model loads when the first response is requested. Use a terminal with GPU access for CUDA inference.
+
+Once the model assets are cached, you can disable Hugging Face network requests:
 
 ```bash
-HF_HUB_OFFLINE=1 dlenv/bin/python VivaSensei/tests/smoke_chat.py
+HF_HUB_OFFLINE=1 python -m streamlit run app.py --server.address 127.0.0.1 --browser.gatherUsageStats false
 ```
 
-This smoke check verifies generation and retained conversation formatting; it
-does not validate technical correctness. During debugging, the local 4-bit model
-gave an incorrect explanation of channel length modulation even with stricter
-examiner instructions. Treat its assessments as practice feedback and verify
-technical explanations against course material. Factual accuracy remains a model
-limitation; passing the application tests does not resolve it.
+This applies to model loading; optional ElevenLabs speech still requires a network connection.
 
-Streamlit reference: [Session State](https://docs.streamlit.io/develop/api-reference/caching-and-state/st.session_state).
+### 4. Enable voice features (optional)
 
-## Voice answers and examiner speech
+Create a `.env` file in the project directory:
 
-Install the dependencies in `requirements.txt` and put `ELEVENLABS_API_KEY` in
-`VivaSensei/.env`. The helper resolves this file relative to its own location,
-so launching Streamlit from `DeepLearning` works. An existing environment
-variable takes precedence; optional `VivaSensei/.env.local` overrides `.env`
-values when no environment variable is already set. Both files are gitignored.
+```dotenv
+ELEVENLABS_API_KEY=your_elevenlabs_api_key
+```
 
-Expand **Answer by voice**, allow microphone access, and record your answer.
-Click **Transcribe recording**, review or edit **Review your transcript**, then
-click **Send voice answer**. The reviewed text enters the same conversation as
-a typed answer. Recording or transcribing alone does not send an answer to Qwen.
-Use **Listen** below any examiner reply to generate an MP3, or enable
-**Read new replies aloud** in the sidebar for automatic speech on new replies.
-Browsers may require pressing the audio player's play button to begin playback.
+The speech helper loads configuration relative to its own directory. Existing environment variables take precedence, followed by `.env.local`, then `.env`. Both environment files are gitignored.
 
-Speech uses the helper's `eleven_v4` synthesis model, `scribe_v2` transcription
-model, and existing voice ID. Your ElevenLabs account must have access to that
-voice. Audio and transcripts are sent to ElevenLabs when the corresponding
-controls are used; Qwen inference remains local. Automatic speech is off by
-default. Ordinary reruns reuse generated audio within the current session,
-and **Start new viva** clears voice drafts and audio along with the chat.
-Speech failures can be retried without losing the text conversation.
+The current helper defaults to `scribe_v2` for transcription, `eleven_v4` for speech synthesis, and voice ID `kLhAstPcnnPxqzk6gS5i`. Your account must support these settings; the defaults are defined in `speech_utils.py`.
 
-The normal test suite mocks ElevenLabs and uses no API credits. To run one real
-synthesis request and transcribe the result (uses ElevenLabs credits):
+Recordings are sent to ElevenLabs for transcription, and examiner text is sent for speech synthesis when those controls are used. Automatic speech is off by default. Speech failures preserve the text conversation.
+
+### Optional: try the examiner from the terminal
 
 ```bash
-dlenv/bin/python VivaSensei/tests/smoke_speech.py
+python inference.py "Ask me one viva question about Miller's theorem."
+python inference.py --device cuda --precision 4bit
+python inference.py --device cpu
 ```
 
-This saves the test MP3 under `VivaSensei/.cache/speech/smoke.mp3`.
-References: [Streamlit audio recording](https://docs.streamlit.io/develop/api-reference/widgets/st.audio_input),
-[ElevenLabs Python SDK](https://github.com/elevenlabs/elevenlabs-python),
-and [ElevenLabs models](https://elevenlabs.io/docs/overview/models).
+These device and precision flags configure the CLI. The Streamlit app uses automatic runtime selection.
+
+## Project structure
+
+```text
+VivaSensei/
+├── app.py              # Streamlit chat, settings, voice controls, and recovery
+├── viva.py             # Viva settings and examiner instructions
+├── inference.py        # Local Qwen loading, runtime selection, and generation
+├── speech_utils.py     # ElevenLabs transcription and speech synthesis
+├── database.py         # MongoDB session helpers; not connected to the app yet
+├── requirements.txt    # Pinned application dependencies
+└── tests/              # Automated tests and optional integration smoke checks
+```
+
+## Validation
+
+Run the automated suite without loading Qwen weights or spending ElevenLabs credits:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+The suite covers session memory and isolation, settings changes, failed-response recovery, transcript review, audio caching, speech errors, runtime selection, and input limits.
+
+Optional integration checks:
+
+```bash
+# Real model generation and conversation formatting; requires cached weights.
+HF_HUB_OFFLINE=1 python tests/smoke_chat.py
+
+# Real synthesis and transcription; requires credentials and uses API credits.
+python tests/smoke_speech.py
+```
+
+The speech check saves its MP3 to `.cache/speech/smoke.mp3`. These checks validate integration behavior, not the factual accuracy of examiner feedback.
+
+## Current limitations
+
+- **Feedback accuracy:** The model can give incorrect technical explanations. Use it for practice and check explanations against course material.
+- **Session persistence:** Chat history is temporary and can reset after a browser reload or server restart. `database.py` contains MongoDB helpers, but the app does not call them and `pymongo` is not in the current requirements.
+- **Conversation length:** Input is capped at 2,048 tokens per call, with up to 192 new output tokens. If the complete history exceeds the limit, the app retains it and asks you to shorten the current answer or start a new viva.
+- **Weakness tracking:** Weaknesses are entered by the student. Automatic scoring, weakness extraction, and progress analytics are not implemented.
+- **Voice availability:** Speech depends on ElevenLabs connectivity, credits, and access to the configured models and voice. Browsers may require manual playback.
+
+## What's next
+
+- Connect persistent session storage and let students revisit past vivas.
+- Add rubric-based assessment and progress summaries.
+- Explore course-material grounding to improve the reliability of technical feedback.
+- Support longer sessions with explicit conversation summarization.
+- Make speech voice and model selection configurable in the interface.
