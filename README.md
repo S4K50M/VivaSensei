@@ -4,7 +4,7 @@
 
 **A Streamlit app that turns viva preparation into a conversation: one question, your answer, concise feedback, and a follow-up.**
 
-Built for students preparing for oral examinations, VivaSensei combines a locally running Qwen language model with optional ElevenLabs speech to help students practise explaining what they know.
+Built for the students preparing for oral examinations, VivaSensei combines a locally running Qwen language model with optional ElevenLabs speech to help students practise explaining what they know.
 
 **Hackathon focus:** Education · Conversational AI · Voice interaction
 
